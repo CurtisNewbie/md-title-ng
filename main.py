@@ -7,6 +7,7 @@ def parse_args(args: list[str]) -> argparse.Namespace:
     ap: argparse.ArgumentParser = argparse.ArgumentParser(prog=PROG, description=DESC, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("-f", "--file", type=str, help="markdown file path", default="")
     ap.add_argument("--dryrun", help="dry run, i.e., output the content only", action="store_true")
+    ap.add_argument("--ignorefirst", help="ignore the first title, starting from the second one", action="store_true")
     return ap.parse_args(args)
 
 
@@ -20,10 +21,10 @@ def store_lines(lines: list[str], file: str):
         f.write(c)
 
 
-def process_line(curr_level: int, ctx: dict[int], line: str, in_code_block: bool) -> tuple[int, dict[int], str, bool]:
-    if line.startswith("```"): return curr_level, ctx, line, not in_code_block
-    if in_code_block: return curr_level, ctx, line, in_code_block # ignore these lines
-    if line.startswith("<!--"): return curr_level, ctx, line, in_code_block # line is commented
+def process_line(curr_level: int, ctx: dict[int], line: str, in_code_block: bool, ignore_first: bool, title_count: int) -> tuple[int, dict[int], str, bool, int]:
+    if line.startswith("```"): return curr_level, ctx, line, not in_code_block, title_count
+    if in_code_block: return curr_level, ctx, line, in_code_block, title_count # ignore these lines
+    if line.startswith("<!--"): return curr_level, ctx, line, in_code_block, title_count # line is commented
 
     # check if the line is a title line
     levels: int = 0
@@ -39,7 +40,8 @@ def process_line(curr_level: int, ctx: dict[int], line: str, in_code_block: bool
             break
         if s == "#": levels += 1
 
-    if levels < 1: return curr_level, ctx, line, False # not a title
+    if levels < 1: return curr_level, ctx, line, False, title_count # not a title
+    if ignore_first and title_count == 0: return curr_level, ctx, line, False, title_count+1 # ignore the first one
 
     if levels < curr_level: # e.g., from "### ... "  to "## ...", reset some of the numbers
         for k in ctx.keys():
@@ -50,8 +52,7 @@ def process_line(curr_level: int, ctx: dict[int], line: str, in_code_block: bool
 
     next = ""
     for i in range(levels):
-        if i > 0: next = next + "." + str(ctx[i + 1])
-        else: next = str(ctx[i + 1])
+        next = next + str(ctx[i + 1]) + "."
 
     j = end
     k = end
@@ -70,17 +71,19 @@ def process_line(curr_level: int, ctx: dict[int], line: str, in_code_block: bool
     if line[k] == " ": line = line[0:j] + " " + next + line[k:]
     else: line = line[0:j] + " " + next + " " + line[k:]
 
-    return levels, ctx, line, False
+    return levels, ctx, line, False, title_count+1
 
 
-def number_titles(lines: list[str]) -> list[str]:
+def number_titles(lines: list[str], args) -> list[str]:
     ctx = {}
     cl = 1
     pline = []
     in_code_block = False
+    title_count = 0
 
-    for l in lines:
-        cl, ctx, l, in_code_block = process_line(cl, ctx, l, in_code_block)
+    for i in range(len(lines)):
+        l = lines[i]
+        cl, ctx, l, in_code_block, title_count = process_line(cl, ctx, l, in_code_block, args.ignorefirst, title_count)
         pline.append(l)
     return pline
 
@@ -93,7 +96,7 @@ def main():
     if not args.file: return
 
     ll = load_lines(args.file)
-    nt = number_titles(ll)
+    nt = number_titles(ll, args)
     if args.dryrun:
         print_lines(nt)
         return
